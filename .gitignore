@@ -11,3 +11,4 @@ GTAGS
 *.exe
 *.swp
 .cvsignore
+*.dylib
