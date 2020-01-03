@@ -3,46 +3,54 @@
 //
 
 #include <mcl/bn256.hpp>
+#include <ctime>
+#include <vector>
 #include <iostream>
 
 using namespace mcl::bn256;
 
-void Hash(G1& P, const std::string& m)
-{
+//const int num_of_keys = 10;
+
+void Hash(G1 &P, const std::string &m) {
     Fp t;
     t.setHashOf(m);
     mapToG1(P, t);
 }
 
-void KeyGen(Fr& s, G2& pub, const G2& Q)
-{
+void KeyGen(Fr &s, G2 &pub, const G2 &Q) {
     s.setRand();
     G2::mul(pub, Q, s); // pub = sQ
 }
 
-void Sign(G1& sign, const Fr& s, const std::string& m)
-{
+void Sign(G1 &sign, const Fr &s, const std::string &m) {
     G1 Hm;
     Hash(Hm, m);
     G1::mul(sign, Hm, s); // sign = s H(m)
 }
 
-bool Verify(const G1& sign, const G2& Q, const G2& pub1, const G2& pub2, const std::string& m)
-{
+bool Verify(const G1 &sign, const G2 &Q, const std::vector<G2> &pub, const std::string &m, int num_of_keys) {
     Fp12 e1, e2, e3;
+    std::vector<Fp12> e;
     G1 Hm;
     Hash(Hm, m);
     pairing(e1, sign, Q); // e1 = e(sign, Q)
-    pairing(e2, Hm, pub1); // e2 = e(Hm, sQ)
-    pairing(e3, Hm, pub2);
+    for (int i = 0; i < num_of_keys; i++) {
+        pairing(e2, Hm, pub[i]);
+        e.push_back(e2);
+    }
+//    pairing(e2, Hm, pub1); // e2 = e(Hm, sQ)
+//    pairing(e3, Hm, pub2);
     Fp12 aggregated_e;
-    Fp12::mul(aggregated_e, e2, e3);
+    Fp12::mul(aggregated_e, e[0], e[1]);
+    for (int i = 2; i < num_of_keys; i++) {
+        Fp12::mul(aggregated_e, aggregated_e, e[i]);
+    }
     return e1 == aggregated_e;
 }
 
-int main(int argc, char *argv[])
-{
-    std::string m = argc == 1 ? "hello mcl" : argv[1];
+void run_exp(const std::string& m, int num_of_keys) {
+    clock_t start_t, end_t;
+    double total_t;
 
     // setup parameter
     initPairing();
@@ -51,30 +59,73 @@ int main(int argc, char *argv[])
 
     // generate secret key and public key
     Fr s1;
+    std::vector<Fr> s;
+    std::vector<G2> pub;
     G2 pub1;
-    KeyGen(s1, pub1, Q);
-    std::cout << "secret key " << s1 << std::endl;
-    std::cout << "public key " << pub1 << std::endl;
+    start_t = clock();
+    for (int i = 0; i < num_of_keys; i++) {
+        KeyGen(s1, pub1, Q);
+        s.push_back(s1);
+        pub.push_back(pub1);
+    }
+    end_t = clock();
+    total_t = 1000 * (double) (end_t - start_t) / CLOCKS_PER_SEC;
+    std::cout << "time used for generate " << num_of_keys << " secret keys and public keys are " << total_t <<
+              " ms" << std::endl;
 
-    // generate another secrete key and public key set
-    Fr s2;
-    G2 pub2;
-    KeyGen(s2, pub2, Q);
-    std::cout << "secret key2 " << s2 << std::endl;
-    std::cout << "public key2 " << pub2 << std::endl;
 
     // sign
+    std::vector<G1> sign;
     G1 aggregated_sign;
     G1 sign1;
-    G1 sign2;
-    Sign(sign1, s1, m);
-    Sign(sign2, s2, m);
-    std::cout << "msg " << m << std::endl;
-    std::cout << "sign1 " << sign1 << std::endl;
-    std::cout << "sign2 " << sign2 << std::endl;
-    G1::add(aggregated_sign, sign1, sign2);
+    start_t = clock();
+    for (int i = 0; i < num_of_keys; i++) {
+        Sign(sign1, s[i], m);
+        sign.push_back(sign1);
+    }
+    end_t = clock();
+    total_t = 1000 * (double) (end_t - start_t) / CLOCKS_PER_SEC;
+    std::cout << "time used for sign with " << num_of_keys << " keys are " << total_t <<
+              " ms" << std::endl;
+
+    start_t = clock();
+    G1::add(aggregated_sign, sign[0], sign[1]);
+    for (int i = 2; i < num_of_keys; i++) {
+        G1::add(aggregated_sign, sign[i], aggregated_sign);
+    }
+    end_t = clock();
+    total_t = 1000 * (double) (end_t - start_t) / CLOCKS_PER_SEC;
+    std::cout << "time used for aggregate " << num_of_keys << " keys are " << total_t <<
+              " ms" << std::endl;
+
 
     // verify
-    bool ok = Verify(aggregated_sign, Q, pub1, pub2, m);
+    start_t = clock();
+    bool ok = Verify(aggregated_sign, Q, pub, m, num_of_keys);
+    end_t = clock();
+    total_t = 1000 * (double) (end_t - start_t) / CLOCKS_PER_SEC;
+    std::cout << "time used for verify " << num_of_keys << " keys are " << total_t <<
+              " ms" << std::endl;
+
     std::cout << "verify " << (ok ? "ok" : "ng") << std::endl;
+}
+
+int main(int argc, char *argv[]) {
+    std::string m = argc == 1 ? "hello mcl" : argv[1];
+    std::string m1 (20, 'x');
+    std::string m2 (1024, 'x');
+
+    int candidates[] = {10, 20, 30, 50, 100, 200, 300, 500, 700, 1000, 2000, 3000, 5000, 10000};
+
+    std::cout << "for message of length 20 bytes" << std::endl;
+    for (int candidate : candidates) {
+        run_exp(m1, candidate);
+    }
+
+    std::cout << "for message of length 1024 bytes" << std::endl;
+    for (int candidate : candidates) {
+        run_exp(m2, candidate);
+    }
+
+//    run_exp(m, 10);
 }
