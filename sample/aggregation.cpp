@@ -37,28 +37,40 @@ bool Verify(const G1 &sign, const G2 &Q, const G2 &pub, const void *m, int size)
     return e1 == e2;
 }
 
-void Aggregation(G1 &result, G1 &sign1, G1 &sign2) {
-    G1::add(result, sign1, sign2);
+void Aggregation(G1 &result, std::vector <G1> sign_list) {
+    G1::add(result, sign_list[0], sign_list[1]);
+    for (int i = 2; i < (int)sign_list.size(); i++) {
+        G1::add(result, result, sign_list[i]);
+    }
 }
 
 bool
-AggregateVerification(G1 &signs, const G2 &Q, const G2 &pub, const void *m1, int size1, const void *m2, int size2) {
-    G1 Hm1, Hm2;
-    Hash(Hm1, m1, size1);
-    Hash(Hm2, m2, size2);
+AggregateVerification(G1 &signs, const G2 &Q, const G2 &pub, std::vector<void *> chunks, std::vector<int> chunk_size) {
+    std::vector <G1> hash_list;
+    G1 Hm;
+    for (int i = 0; i < (int)chunks.size(); i++) {
+        Hash(Hm, chunks[i], chunk_size[i]);
+        hash_list.push_back(Hm);
+    }
 
     Fp12 e_left, e_sum;
     pairing(e_left, signs, Q);
 
-    Fp12 e1, e2;
-    pairing(e1, Hm1, pub);
-    pairing(e2, Hm2, pub);
-    Fp12::mul(e_sum, e1, e2);
+    std::vector <Fp12> e_list;
+    Fp12 e;
+    for (int i = 0; i < (int)chunks.size(); i++) {
+        pairing(e, hash_list[i], pub);
+        e_list.push_back(e);
+    }
+    Fp12::mul(e_sum, e_list[0], e_list[1]);
+    for (int i = 2; i < (int)chunks.size(); i++) {
+        Fp12::mul(e_sum, e_list[i], e_sum);
+    }
 
     return e_left == e_sum;
 }
 
-void run_exp2(const void *m1, const void *m2) {
+void run_exp2(std::vector<void *> chunks, std::vector<int> chunk_size) {
 
     // setup parameter
     initPairing();
@@ -71,25 +83,41 @@ void run_exp2(const void *m1, const void *m2) {
     KeyGen(s, pub, Q);
 
     // sign
-    G1 sign1, sign2;
-    Sign(sign1, s, m1, 24);
-    Sign(sign2, s, m2, 24);
+    G1 sign;
+    std::vector <G1> sign_list;
+    for (int i = 0; i < (int)chunks.size(); i++) {
+        Sign(sign, s, chunks[i], chunk_size[i]);
+        sign_list.push_back(sign);
+    }
 
     // verify
-    bool ok1 = Verify(sign1, Q, pub, m1, 24);
-    bool ok2 = Verify(sign2, Q, pub, m2, 24);
-    std::cout << "verify1 " << (ok1 ? "ok" : "ng") << std::endl;
-    std::cout << "verify2 " << (ok2 ? "ok" : "ng") << std::endl;
+//    bool ok1 = Verify(sign1, Q, pub, m1, 24);
+//    std::cout << "verify1 " << (ok1 ? "ok" : "ng") << std::endl;
 
     G1 signs;
-    Aggregation(signs, sign1, sign2);
-    bool ok3 = AggregateVerification(signs, Q, pub, m1,24, m2, 24);
+    Aggregation(signs, sign_list);
+    bool ok3 = AggregateVerification(signs, Q, pub, chunks, chunk_size);
     std::cout << "verify3 " << (ok3 ? "ok" : "ng") << std::endl;
 
 }
 
 int main(int argc, char *argv[]) {
+    std::string m = argc == 1 ? "hello mcl" : argv[1];
+
     std::string m1 = "str1 test";
     std::string m2 = "str2 for test";
-    run_exp2(static_cast<void*>(&m1), static_cast<void*> (&m2));
+    std::string m3 = "str 3 for test loops";
+
+    std::vector<void*> chunks;
+    std::vector<int> chunk_size;
+
+    chunks.push_back(static_cast<void*> (&m1));
+    chunks.push_back(static_cast<void*> (&m2));
+    chunks.push_back(static_cast<void*> (&m3));
+
+    chunk_size.push_back(sizeof(m1));
+    chunk_size.push_back(sizeof(m2));
+    chunk_size.push_back(sizeof(m3));
+
+    run_exp2(chunks, chunk_size);
 }
